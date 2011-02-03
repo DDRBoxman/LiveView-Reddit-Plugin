@@ -23,6 +23,13 @@
 
 package com.recursivepenguin.android.liveview.reddit;
 
+import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.HttpGet;
+import org.apache.http.impl.client.DefaultHttpClient;
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import com.sonyericsson.extras.liveview.plugins.AbstractPluginService;
 import com.sonyericsson.extras.liveview.plugins.PluginConstants;
 
@@ -41,6 +48,8 @@ public class RedditService extends AbstractPluginService {
 	long mUpdateInterval = 900000;
 	String UPDATE_INTERVAL = "updateInterval";
 	int mCounter = 0;
+	
+	HttpClient mClient = new DefaultHttpClient();
 	
 	@Override
 	public void onStart(Intent intent, int startId) {
@@ -203,10 +212,10 @@ public class RedditService extends AbstractPluginService {
         Log.d(PluginConstants.LOG_TAG, "screenMode: screen is now " + ((mode == 0) ? "OFF" : "ON"));
     }
 			
-    private void sendAnnounce(String header, String body) {
+    private void sendAnnounce(String header, String body, String messageIntent) {
 		try {
 			if(mWorkerRunning && (mLiveViewAdapter != null) && mSharedPreferences.getBoolean(PluginConstants.PREFERENCES_PLUGIN_ENABLED, false)) {
-			    mLiveViewAdapter.sendAnnounce(mPluginId, mMenuIcon, header, body, System.currentTimeMillis(), "http://en.wikipedia.org/wiki/Hello_world_program");
+			    mLiveViewAdapter.sendAnnounce(mPluginId, mMenuIcon, header, body, System.currentTimeMillis(), messageIntent);
 				Log.d(PluginConstants.LOG_TAG, "Announce sent to LiveView");
 			} else {
 				Log.d(PluginConstants.LOG_TAG, "LiveView not reachable");
@@ -233,10 +242,30 @@ public class RedditService extends AbstractPluginService {
         @Override
         public void run() {
             try
-            {
-                sendAnnounce("Hello", "Hello world number " + mCounter++);
+            {            	
+            	//get messages! http://www.reddit.com/message/unread.json
+            	HttpGet getRequest = new HttpGet("http://www.reddit.com/message/unread.json");
+            	HttpResponse res = mClient.execute(getRequest);
+            	int status = res.getStatusLine().getStatusCode();
+            	if (status == 200) {
+            		String data = Util.convertStreamToString(res.getEntity().getContent());
+            		JSONObject inbox = new JSONObject(data);
+            		inbox = inbox.getJSONObject("data");
+            		JSONArray messages = inbox.getJSONArray("children");
+            		for (int i=0; i<messages.length(); i++) {
+            			JSONObject message = messages.getJSONObject(i);
+            			message = message.getJSONObject("data");
+            			String id = message.getString("id");
+            			//check if id is already in database
+            			if (true) {
+            				String subject = message.getString("subject");
+            				String content = message.getString("body");
+            				sendAnnounce(subject, content, "http://www.reddit.com/message/messages/" + id);
+            			}
+            		}
+            	} 
             } catch(Exception re) {
-                Log.e(PluginConstants.LOG_TAG, "Failed to send image to LiveView.", re);
+                Log.e(PluginConstants.LOG_TAG, "Failed to load reddit messages.", re);
             }
             
             scheduleTimer();
