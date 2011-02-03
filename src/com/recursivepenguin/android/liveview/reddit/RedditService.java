@@ -23,11 +23,21 @@
 
 package com.recursivepenguin.android.liveview.reddit;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+
 import org.apache.http.HttpResponse;
+import org.apache.http.NameValuePair;
+import org.apache.http.client.ClientProtocolException;
 import org.apache.http.client.HttpClient;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
 import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.message.BasicNameValuePair;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
 import com.sonyericsson.extras.liveview.plugins.AbstractPluginService;
@@ -48,6 +58,9 @@ public class RedditService extends AbstractPluginService {
 	long mUpdateInterval = 900000;
 	String UPDATE_INTERVAL = "updateInterval";
 	int mCounter = 0;
+	
+	String mUsername;
+	String mPassword;
 	
 	HttpClient mClient = new DefaultHttpClient();
 	
@@ -140,6 +153,10 @@ public class RedditService extends AbstractPluginService {
 		if(key.equals(UPDATE_INTERVAL)) {
 			long value = Long.parseLong(prefs.getString("updateInterval", "15"));
 			mUpdateInterval = value * 1000 * 60;
+		} else if (key.equals("username")) {
+			mUsername = prefs.getString("username", "");
+		} else if (key.equals("password")) {
+			mPassword = prefs.getString("password", "");
 		}
 	}
 
@@ -242,28 +259,39 @@ public class RedditService extends AbstractPluginService {
         @Override
         public void run() {
             try
-            {            	
-            	//get messages! http://www.reddit.com/message/unread.json
-            	HttpGet getRequest = new HttpGet("http://www.reddit.com/message/unread.json");
-            	HttpResponse res = mClient.execute(getRequest);
-            	int status = res.getStatusLine().getStatusCode();
-            	if (status == 200) {
-            		String data = Util.convertStreamToString(res.getEntity().getContent());
-            		JSONObject inbox = new JSONObject(data);
-            		inbox = inbox.getJSONObject("data");
-            		JSONArray messages = inbox.getJSONArray("children");
-            		for (int i=0; i<messages.length(); i++) {
-            			JSONObject message = messages.getJSONObject(i);
-            			message = message.getJSONObject("data");
-            			String id = message.getString("id");
-            			//check if id is already in database
-            			if (true) {
-            				String subject = message.getString("subject");
-            				String content = message.getString("body");
-            				sendAnnounce(subject, content, "http://www.reddit.com/message/messages/" + id);
-            			}
-            		}
-            	} 
+            {          
+            	String modhash = null;
+            	if (mUsername.length() > 0 && mPassword.length() > 0) {
+            		modhash = loginUser();
+            	}
+            	if (modhash != null) {
+	            	//get messages! http://www.reddit.com/message/unread.json
+            		HttpPost req = new HttpPost("http://www.reddit.com/message/unread.json");
+            		List<NameValuePair> nameValuePairs = new ArrayList<NameValuePair>(2);
+            		nameValuePairs.add(new BasicNameValuePair("uh", modhash));
+            		req.setEntity(new UrlEncodedFormEntity(nameValuePairs));
+            		HttpResponse res = mClient.execute(req);
+	            	int status = res.getStatusLine().getStatusCode();
+	            	if (status == 200) {
+	            		String data = Util.convertStreamToString(res.getEntity().getContent());
+	            		JSONObject inbox = new JSONObject(data);
+	            		inbox = inbox.getJSONObject("data");
+	            		JSONArray messages = inbox.getJSONArray("children");
+	            		for (int i=0; i<messages.length(); i++) {
+	            			JSONObject message = messages.getJSONObject(i);
+	            			message = message.getJSONObject("data");
+	            			String id = message.getString("id");
+	            			//check if id is already in database
+	            			if (true) {
+	            				String subject = message.getString("subject");
+	            				String content = message.getString("body");
+	            				sendAnnounce(subject, content, "http://www.reddit.com/message/messages/" + id);
+	            			}
+	            		}
+	            	} else {
+	            		Log.d(PluginConstants.LOG_TAG, ":(" + res.getStatusLine().getReasonPhrase());
+	            	}
+            	}
             } catch(Exception re) {
                 Log.e(PluginConstants.LOG_TAG, "Failed to load reddit messages.", re);
             }
@@ -272,4 +300,47 @@ public class RedditService extends AbstractPluginService {
         }
         
     };
+    
+    public String loginUser() {
+		HttpPost loginRequest = new HttpPost("http://www.reddit.com/api/login/" + mUsername);
+		try {
+	        // Add your data
+	        List<NameValuePair> nameValuePairs = new ArrayList<NameValuePair>(2);
+	        nameValuePairs.add(new BasicNameValuePair("user", mUsername));
+	        nameValuePairs.add(new BasicNameValuePair("passwd", mPassword));
+	        nameValuePairs.add(new BasicNameValuePair("api_type", "json"));
+	        loginRequest.setEntity(new UrlEncodedFormEntity(nameValuePairs));
+
+	        // Execute HTTP Post Request
+	        HttpResponse response = mClient.execute(loginRequest);
+	        String data = Util.convertStreamToString(response.getEntity().getContent());
+
+	        JSONObject reponseData =new JSONObject(data);
+	        reponseData = reponseData.getJSONObject("json");
+
+	        if (reponseData.has("errors")) {
+		        JSONArray errors = reponseData.getJSONArray("errors");
+		        if (errors.length() > 0) {
+		        	return null;
+		        }
+	        }
+
+	        //reponseData = reponseData.getJSONObject("data");
+	        String modhash = reponseData.getString("modhash");
+	        //cookie = reponseData.getString("cookie");
+
+	        //prefsChanged = true;
+
+	        return modhash;
+	    } catch (ClientProtocolException e) {
+	    	e.printStackTrace();
+	        return null;
+	    } catch (IOException e) {
+	    	e.printStackTrace();
+	    	return null;
+	    } catch (JSONException e) {
+	    	e.printStackTrace();
+			return null;
+		}
+	}
 }
