@@ -60,7 +60,7 @@ public class RedditService extends AbstractPluginService {
 
 	Handler mHandler;
 	boolean mWorkerRunning = false;
-	long mUpdateInterval = 30000;
+	long mUpdateInterval = 900000;
 	String UPDATE_INTERVAL = "updateInterval";
 	int mCounter = 0;
 	
@@ -73,6 +73,10 @@ public class RedditService extends AbstractPluginService {
     // Create local HTTP context
     HttpContext localContext = new BasicHttpContext();
 	
+    public static final String PREFS_NAME = "oldMessages";
+    
+    SharedPreferences oldMessages;
+    
 	@Override
 	public void onStart(Intent intent, int startId) {
 		super.onStart(intent, startId);
@@ -89,9 +93,7 @@ public class RedditService extends AbstractPluginService {
 	public void onCreate() {
 		super.onCreate();
 		
-		// ... 
-		// Do plugin specifics.
-		// ...
+		oldMessages = getSharedPreferences(PREFS_NAME, 0);
 	}
 	
 	@Override
@@ -290,15 +292,22 @@ public class RedditService extends AbstractPluginService {
 		            		JSONObject inbox = new JSONObject(data);
 		            		inbox = inbox.getJSONObject("data");
 		            		JSONArray messages = inbox.getJSONArray("children");
+		            		SharedPreferences.Editor editor = oldMessages.edit();
 		            		for (int i=0; i<messages.length(); i++) {
 		            			JSONObject message = messages.getJSONObject(i);
 		            			message = message.getJSONObject("data");
 		            			String id = message.getString("id");
 		            			//check if id is already in database
-		            			if (true) {
+		            			if (!oldMessages.contains(id)) {
+		            				editor.putBoolean(id, true);
+		            				try {
 		            				String subject = message.getString("subject");
 		            				String content = message.getString("body");
+		            				editor.commit();
 		            				sendAnnounce(subject, content, "http://www.reddit.com/message/messages/" + id);
+		            				} catch(JSONException e) {
+		            					
+		            				}	
 		            			}
 		            		}
 		            		
