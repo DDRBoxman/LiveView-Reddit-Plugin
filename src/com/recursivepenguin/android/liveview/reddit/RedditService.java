@@ -30,12 +30,17 @@ import java.util.List;
 import org.apache.http.HttpResponse;
 import org.apache.http.NameValuePair;
 import org.apache.http.client.ClientProtocolException;
+import org.apache.http.client.CookieStore;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
+import org.apache.http.client.protocol.ClientContext;
+import org.apache.http.impl.client.BasicCookieStore;
 import org.apache.http.impl.client.DefaultHttpClient;
 import org.apache.http.message.BasicNameValuePair;
+import org.apache.http.protocol.BasicHttpContext;
+import org.apache.http.protocol.HttpContext;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -55,7 +60,7 @@ public class RedditService extends AbstractPluginService {
 
 	Handler mHandler;
 	boolean mWorkerRunning = false;
-	long mUpdateInterval = 900000;
+	long mUpdateInterval = 30000;
 	String UPDATE_INTERVAL = "updateInterval";
 	int mCounter = 0;
 	
@@ -63,6 +68,10 @@ public class RedditService extends AbstractPluginService {
 	String mPassword;
 	
 	HttpClient mClient = new DefaultHttpClient();
+	// Create a local instance of cookie store
+    CookieStore cookieStore = new BasicCookieStore();
+    // Create local HTTP context
+    HttpContext localContext = new BasicHttpContext();
 	
 	@Override
 	public void onStart(Intent intent, int startId) {
@@ -72,6 +81,8 @@ public class RedditService extends AbstractPluginService {
 		if(mHandler == null) {
 			mHandler = new Handler();
 		}
+		
+		localContext.setAttribute(ClientContext.COOKIE_STORE, cookieStore);
 	}
 	
 	@Override
@@ -107,6 +118,7 @@ public class RedditService extends AbstractPluginService {
 		// Check if plugin is enabled.
 		if(!mWorkerRunning && mSharedPreferences.getBoolean(PluginConstants.PREFERENCES_PLUGIN_ENABLED, false)) {
 			mWorkerRunning = true;
+			Log.d(PluginConstants.LOG_TAG, "start timer");
 			scheduleTimer();
 		}
 		
@@ -213,11 +225,7 @@ public class RedditService extends AbstractPluginService {
 		Log.d(PluginConstants.LOG_TAG, "openInPhone: " + openInPhoneAction);
 		
 		// Open in browser.
-		final Uri uri = Uri.parse(openInPhoneAction);
-		final Intent browserIntent = new Intent();
-		browserIntent.setData(uri);
-		browserIntent.setClassName("com.android.browser", "com.android.browser.BrowserActivity");
-		browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+		Intent browserIntent = new Intent("android.intent.action.VIEW", Uri.parse(openInPhoneAction));
 		startActivity(browserIntent);
 	}
 	
@@ -247,6 +255,7 @@ public class RedditService extends AbstractPluginService {
      */
     private void scheduleTimer() {
         if(mWorkerRunning) {
+        	Log.d(PluginConstants.LOG_TAG, "scheduling");
             mHandler.postDelayed(mAnnouncer, mUpdateInterval);
         }
     }
@@ -261,39 +270,46 @@ public class RedditService extends AbstractPluginService {
             try
             {          
             	String modhash = null;
-            	if (mUsername.length() > 0 && mPassword.length() > 0) {
+            	mUsername = mSharedPreferences.getString("username", null);
+            	mPassword = mSharedPreferences.getString("password", null);
+            	Log.d(PluginConstants.LOG_TAG, "" + mPassword + mUsername);
+            	if (mUsername != null && mPassword != null && mUsername.length() > 0 && mPassword.length() > 0) {
             		modhash = loginUser();
-            	}
-            	if (modhash != null) {
-	            	//get messages! http://www.reddit.com/message/unread.json
-            		HttpPost req = new HttpPost("http://www.reddit.com/message/unread.json");
-            		List<NameValuePair> nameValuePairs = new ArrayList<NameValuePair>(2);
-            		nameValuePairs.add(new BasicNameValuePair("uh", modhash));
-            		req.setEntity(new UrlEncodedFormEntity(nameValuePairs));
-            		HttpResponse res = mClient.execute(req);
-	            	int status = res.getStatusLine().getStatusCode();
-	            	if (status == 200) {
-	            		String data = Util.convertStreamToString(res.getEntity().getContent());
-	            		JSONObject inbox = new JSONObject(data);
-	            		inbox = inbox.getJSONObject("data");
-	            		JSONArray messages = inbox.getJSONArray("children");
-	            		for (int i=0; i<messages.length(); i++) {
-	            			JSONObject message = messages.getJSONObject(i);
-	            			message = message.getJSONObject("data");
-	            			String id = message.getString("id");
-	            			//check if id is already in database
-	            			if (true) {
-	            				String subject = message.getString("subject");
-	            				String content = message.getString("body");
-	            				sendAnnounce(subject, content, "http://www.reddit.com/message/messages/" + id);
-	            			}
-	            		}
-	            	} else {
-	            		Log.d(PluginConstants.LOG_TAG, ":(" + res.getStatusLine().getReasonPhrase());
+	            	if (modhash != null) {
+	            		Log.d(PluginConstants.LOG_TAG, "" + modhash);
+		            	//get messages! http://www.reddit.com/message/unread.json
+	            		HttpGet req = new HttpGet("http://www.reddit.com/message/unread.json");
+	            		//List<NameValuePair> nameValuePairs = new ArrayList<NameValuePair>(2);
+	            		//nameValuePairs.add(new BasicNameValuePair("uh", modhash));
+	            		//req.setEntity(new UrlEncodedFormEntity(nameValuePairs));
+	            		HttpResponse res = mClient.execute(req);
+		            	int status = res.getStatusLine().getStatusCode();
+		            	if (status == 200) {
+		            		String data = Util.convertStreamToString(res.getEntity().getContent());
+		            		Log.d(PluginConstants.LOG_TAG, "data: " + data);
+		            		JSONObject inbox = new JSONObject(data);
+		            		inbox = inbox.getJSONObject("data");
+		            		JSONArray messages = inbox.getJSONArray("children");
+		            		for (int i=0; i<messages.length(); i++) {
+		            			JSONObject message = messages.getJSONObject(i);
+		            			message = message.getJSONObject("data");
+		            			String id = message.getString("id");
+		            			//check if id is already in database
+		            			if (true) {
+		            				String subject = message.getString("subject");
+		            				String content = message.getString("body");
+		            				sendAnnounce(subject, content, "http://www.reddit.com/message/messages/" + id);
+		            			}
+		            		}
+		            		
+		            	} else {
+		            		Log.d(PluginConstants.LOG_TAG, ":(" + res.getStatusLine().getReasonPhrase());
+		            	}
 	            	}
             	}
             } catch(Exception re) {
-                Log.e(PluginConstants.LOG_TAG, "Failed to load reddit messages.", re);
+            	re.printStackTrace();
+            	Log.e(PluginConstants.LOG_TAG, "Failed to load reddit messages.", re);
             }
             
             scheduleTimer();
@@ -315,6 +331,8 @@ public class RedditService extends AbstractPluginService {
 	        HttpResponse response = mClient.execute(loginRequest);
 	        String data = Util.convertStreamToString(response.getEntity().getContent());
 
+	        Log.d(PluginConstants.LOG_TAG, "data" + data);
+	        
 	        JSONObject reponseData =new JSONObject(data);
 	        reponseData = reponseData.getJSONObject("json");
 
@@ -325,7 +343,7 @@ public class RedditService extends AbstractPluginService {
 		        }
 	        }
 
-	        //reponseData = reponseData.getJSONObject("data");
+	        reponseData = reponseData.getJSONObject("data");
 	        String modhash = reponseData.getString("modhash");
 	        //cookie = reponseData.getString("cookie");
 
