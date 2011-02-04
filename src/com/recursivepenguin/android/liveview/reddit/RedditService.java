@@ -36,8 +36,10 @@ import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.protocol.ClientContext;
+import org.apache.http.cookie.Cookie;
 import org.apache.http.impl.client.BasicCookieStore;
 import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.http.impl.cookie.BasicClientCookie;
 import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.protocol.BasicHttpContext;
 import org.apache.http.protocol.HttpContext;
@@ -51,6 +53,7 @@ import com.sonyericsson.extras.liveview.plugins.PluginConstants;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.SharedPreferences.Editor;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.IBinder;
@@ -73,6 +76,8 @@ public class RedditService extends AbstractPluginService {
     // Create local HTTP context
     HttpContext localContext = new BasicHttpContext();
 	
+    boolean cookieFlag = false;
+    
     public static final String PREFS_NAME = "oldMessages";
     
     SharedPreferences oldMessages;
@@ -271,51 +276,85 @@ public class RedditService extends AbstractPluginService {
         public void run() {
             try
             {          
-            	String modhash = null;
-            	mUsername = mSharedPreferences.getString("username", null);
-            	mPassword = mSharedPreferences.getString("password", null);
-            	Log.d(PluginConstants.LOG_TAG, "" + mPassword + mUsername);
-            	if (mUsername != null && mPassword != null && mUsername.length() > 0 && mPassword.length() > 0) {
-            		modhash = loginUser();
-	            	if (modhash != null) {
-	            		Log.d(PluginConstants.LOG_TAG, "" + modhash);
-		            	//get messages! http://www.reddit.com/message/unread.json
-	            		HttpGet req = new HttpGet("http://www.reddit.com/message/unread.json");
-	            		//List<NameValuePair> nameValuePairs = new ArrayList<NameValuePair>(2);
-	            		//nameValuePairs.add(new BasicNameValuePair("uh", modhash));
-	            		//req.setEntity(new UrlEncodedFormEntity(nameValuePairs));
-	            		HttpResponse res = mClient.execute(req);
-		            	int status = res.getStatusLine().getStatusCode();
-		            	if (status == 200) {
-		            		String data = Util.convertStreamToString(res.getEntity().getContent());
-		            		Log.d(PluginConstants.LOG_TAG, "data: " + data);
-		            		JSONObject inbox = new JSONObject(data);
-		            		inbox = inbox.getJSONObject("data");
-		            		JSONArray messages = inbox.getJSONArray("children");
-		            		SharedPreferences.Editor editor = oldMessages.edit();
-		            		for (int i=0; i<messages.length(); i++) {
-		            			JSONObject message = messages.getJSONObject(i);
-		            			message = message.getJSONObject("data");
-		            			String id = message.getString("id");
-		            			//check if id is already in database
-		            			if (!oldMessages.contains(id)) {
-		            				editor.putBoolean(id, true);
-		            				try {
-		            				String subject = message.getString("subject");
-		            				String content = message.getString("body");
-		            				editor.commit();
-		            				sendAnnounce(subject, content, "http://www.reddit.com/message/messages/" + id);
-		            				} catch(JSONException e) {
-		            					
-		            				}	
-		            			}
-		            		}
-		            		
-		            	} else {
-		            		Log.d(PluginConstants.LOG_TAG, ":(" + res.getStatusLine().getReasonPhrase());
-		            	}
+            	String cookie = null;
+            	if (!cookieFlag) {
+	            	mUsername = mSharedPreferences.getString("username", null);
+	            	mPassword = mSharedPreferences.getString("password", null);
+	            	Log.d(PluginConstants.LOG_TAG, "" + mPassword + mUsername);
+	            	if (!mSharedPreferences.contains("cookie")) {
+	            		if (mUsername != null && mPassword != null && mUsername.length() > 0 && mPassword.length() > 0) {
+	            			cookie = loginUser();
+	            			if (cookie != null) {
+	            				Cookie redditCookie = null;
+	            				List<Cookie> cookies = cookieStore.getCookies();
+	            	        	for (Cookie c : cookies) {
+	            	        		if (c.getName().equals("reddit_session")) {
+	            	        			redditCookie = c;
+	            	        			break;
+	            	        		}
+	            	        	}
+	            	        	if (redditCookie != null) {
+		            	        	cookieFlag = true;
+		            				Editor edit = mSharedPreferences.edit();
+		            				edit.putString("cookie", redditCookie.getValue());
+		            				edit.putString("cookie_domain", redditCookie.getDomain());
+		            				edit.putString("cookie_path", redditCookie.getPath());
+	            	        	}
+	            			}
+	                	}
+	            	}
+	            	else {
+	            		cookie = mSharedPreferences.getString("cookie", null);
+	            		String cookieDomain = mSharedPreferences.getString("cookie_domain", "reddit.com");
+	            		String cookiePath = mSharedPreferences.getString("cookie_path", "");
+	            		BasicClientCookie redditSessionCookie = new BasicClientCookie("reddit_session", cookie);
+	            		redditSessionCookie.setDomain(cookieDomain);
+	                	redditSessionCookie.setPath(cookiePath);
+	                	redditSessionCookie.setExpiryDate(null);
+	                	cookieStore.addCookie(redditSessionCookie);
+	            		cookieFlag = true;
 	            	}
             	}
+            	if (cookieFlag) {
+
+            		Log.d(PluginConstants.LOG_TAG, "" + cookie);
+	            	//get messages! http://www.reddit.com/message/unread.json
+            		HttpGet req = new HttpGet("http://www.reddit.com/message/unread.json");
+            		//List<NameValuePair> nameValuePairs = new ArrayList<NameValuePair>(2);
+            		//nameValuePairs.add(new BasicNameValuePair("uh", modhash));
+            		//req.setEntity(new UrlEncodedFormEntity(nameValuePairs));
+            		HttpResponse res = mClient.execute(req);
+	            	int status = res.getStatusLine().getStatusCode();
+	            	if (status == 200) {
+	            		String data = Util.convertStreamToString(res.getEntity().getContent());
+	            		Log.d(PluginConstants.LOG_TAG, "data: " + data);
+	            		JSONObject inbox = new JSONObject(data);
+	            		inbox = inbox.getJSONObject("data");
+	            		JSONArray messages = inbox.getJSONArray("children");
+	            		SharedPreferences.Editor editor = oldMessages.edit();
+	            		for (int i=0; i<messages.length(); i++) {
+	            			JSONObject message = messages.getJSONObject(i);
+	            			message = message.getJSONObject("data");
+	            			String id = message.getString("id");
+	            			//check if id is already in database
+	            			if (!oldMessages.contains(id)) {
+	            				editor.putBoolean(id, true);
+	            				try {
+	            				String subject = message.getString("subject");
+	            				String content = message.getString("body");
+	            				editor.commit();
+	            				sendAnnounce(subject, content, "http://www.reddit.com/message/messages/" + id);
+	            				} catch(JSONException e) {
+	            					
+	            				}	
+	            			}
+	            		}
+	            		
+	            	} else {
+	            		Log.d(PluginConstants.LOG_TAG, ":(" + res.getStatusLine().getReasonPhrase());
+	            	}
+            	}
+            	
             } catch(Exception re) {
             	re.printStackTrace();
             	Log.e(PluginConstants.LOG_TAG, "Failed to load reddit messages.", re);
@@ -354,11 +393,11 @@ public class RedditService extends AbstractPluginService {
 
 	        reponseData = reponseData.getJSONObject("data");
 	        String modhash = reponseData.getString("modhash");
-	        //cookie = reponseData.getString("cookie");
+	        String cookie = reponseData.getString("cookie");
 
 	        //prefsChanged = true;
 
-	        return modhash;
+	        return cookie;
 	    } catch (ClientProtocolException e) {
 	    	e.printStackTrace();
 	        return null;
